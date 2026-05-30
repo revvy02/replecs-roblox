@@ -2,12 +2,12 @@
 -- LocalScript so preregistered component ids line up across the two VMs.
 --
 -- Mirrors the game's world.luau: replecs (and anything that preregisters
--- components, like replecs-rbx) MUST be required before the world is created.
+-- components, like replecs-roblox) MUST be required before the world is created.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local packages = ReplicatedStorage.packages
 
 require(packages.replecs)
-require(packages.replecs_rbx)
+require(packages.replecs_roblox)
 
 local Jecs = require(packages.jecs)
 

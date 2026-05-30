@@ -30,18 +30,18 @@ local JecsUtils = require(script.Parent.jecs_utils)
 local monitor = JecsUtils.monitor
 local observer = JecsUtils.observer
 
-local TAG = "replecs-rbx.Instance"
-local ATTR = "replecs-rbx.InstanceGuid"
+local TAG = "replecs-roblox.Instance"
+local ATTR = "replecs-roblox.InstanceGuid"
 
 -- Preregister so every world sees the same component IDs.
 -- InstanceGuid carries Replecs.shared so replecs treats it as a known
 -- cross-side component during handshakes.
 local InstanceGuid = Jecs.component() :: Jecs.Id<string>
-Jecs.meta(InstanceGuid, Jecs.Name, "replecs-rbx.InstanceGuid")
+Jecs.meta(InstanceGuid, Jecs.Name, "replecs-roblox.InstanceGuid")
 Jecs.meta(InstanceGuid, Replecs.shared)
 
 local InstanceProtocol = Jecs.component()
-Jecs.meta(InstanceProtocol, Jecs.Name, "replecs-rbx.InstanceProtocol")
+Jecs.meta(InstanceProtocol, Jecs.Name, "replecs-roblox.InstanceProtocol")
 
 local function setupNetworkedInstanceReconciler(world: Jecs.World)
 	local guidToEntityComponents = {}

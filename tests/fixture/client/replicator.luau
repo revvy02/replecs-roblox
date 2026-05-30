@@ -5,7 +5,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local packages = ReplicatedStorage.packages
 
 local replecs = require(packages.replecs)
-local rbx = require(packages.replecs_rbx)
+local rbx = require(packages.replecs_roblox)
 local world = require(ReplicatedStorage.shared.world)
 
 -- Register every shared component (cts) before the replicator is created/init'd,

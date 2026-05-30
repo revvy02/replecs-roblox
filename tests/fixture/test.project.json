@@ -1,5 +1,5 @@
 {
-	"name": "replecs-rbx-test",
+	"name": "replecs-roblox-test",
 	"emitLegacyScripts": false,
 	"tree": {
 		"$className": "DataModel",
@@ -7,7 +7,7 @@
 			"$className": "ReplicatedStorage",
 			"packages": {
 				"$path": "../../roblox_packages",
-				"replecs_rbx": {
+				"replecs_roblox": {
 					"$path": "../../src"
 				}
 			},

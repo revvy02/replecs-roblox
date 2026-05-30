@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "replecs-rbx-tests",
+      "name": "replecs-roblox-tests",
       "dependencies": {
         "@rodeo/client": "file:vendor/rodeo/rodeo-client-ts",
       },

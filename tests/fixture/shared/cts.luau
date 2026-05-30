@@ -10,7 +10,7 @@ local Replecs = require(packages.replecs)
 local world = require(script.Parent.world)
 
 local cts = {
-	-- carries the replicated Instance reference (driven via replecs-rbx set_instance)
+	-- carries the replicated Instance reference (driven via replecs-roblox set_instance)
 	Target = world:component(),
 	-- a plain value component, to exercise ordinary replication alongside it
 	Health = world:component(),
