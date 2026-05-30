@@ -1,0 +1,34 @@
+{
+	"name": "replecs-rbx-test",
+	"emitLegacyScripts": false,
+	"tree": {
+		"$className": "DataModel",
+		"ReplicatedStorage": {
+			"$className": "ReplicatedStorage",
+			"packages": {
+				"$path": "../../roblox_packages",
+				"replecs_rbx": {
+					"$path": "../../src"
+				}
+			},
+			"shared": {
+				"$path": "shared"
+			},
+			"client": {
+				"$path": "client"
+			}
+		},
+		"ServerScriptService": {
+			"$className": "ServerScriptService",
+			"server": {
+				"$path": "server"
+			}
+		},
+		"Workspace": {
+			"$className": "Workspace",
+			"$properties": {
+				"StreamingEnabled": false
+			}
+		}
+	}
+}

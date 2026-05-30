@@ -1,0 +1,18 @@
+[tools]
+"ubi:revvy02/rojo" = "v7.7.0-rc.1-fork.2"
+"ubi:revvy02/rodeo" = "v1.0.0-rc.5"
+"ubi:pesde-pkg/pesde" = "latest"
+"ubi:UpliftGames/wally" = "v0.3.2"
+bun = "latest"
+
+[tasks.install]
+description = "Install Roblox packages (pesde) and test deps (bun)"
+run = ["pesde install", "bun install"]
+
+[tasks.test]
+description = "Build the fixture place and run the multiplayer replication tests"
+run = "bun test ./tests"
+
+[tasks.publish-wally]
+description = "Publish the package to the wally registry"
+run = "wally publish"

@@ -1,0 +1,15 @@
+{
+  "name": "replecs-rbx-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test ./tests"
+  },
+  "dependencies": {
+    "@rodeo/client": "file:vendor/rodeo/rodeo-client-ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  }
+}

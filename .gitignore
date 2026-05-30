@@ -1,0 +1,17 @@
+# pesde / wally package installs
+/roblox_packages/
+/luau_packages/
+/lune_packages/
+
+# bun / node
+/node_modules/
+
+# generated build + sourcemap
+/build/
+/sourcemap.json
+
+# built test place
+/place.rbxl
+/*.rbxl.lock
+
+.DS_Store

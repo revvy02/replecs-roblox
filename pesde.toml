@@ -1,0 +1,22 @@
+name = "rvy/replecs_rbx"
+version = "0.1.0"
+license = "MIT"
+private = true
+
+[engines]
+pesde = "^0.7.2"
+
+[target]
+environment = "roblox"
+build_files = ["src"]
+
+[indices]
+default = "https://github.com/pesde-pkg/index"
+
+[wally_indices]
+default = "https://github.com/UpliftGames/wally-index"
+
+[dependencies]
+jecs = { wally = "ukendio/jecs", version = "^0.10.4" }
+replecs = { wally = "pepeeltoro41/replecs", version = "^0.3.1" }
+jecs_utils = { wally = "pepeeltoro41/jecs-utils", version = "^1.4.1" }

@@ -1,0 +1,3 @@
+[submodule "vendor/rodeo"]
+	path = vendor/rodeo
+	url = git@github.com:revvy02/rodeo.git
