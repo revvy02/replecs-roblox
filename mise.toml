@@ -1,6 +1,6 @@
 [tools]
 "ubi:revvy02/rojo" = "v7.7.0-rc.1-fork.2"
-"ubi:revvy02/rodeo" = "v1.0.0-rc.5"
+"ubi:revvy02/rodeo" = "v1.0.0-rc.7"
 "ubi:pesde-pkg/pesde" = "latest"
 "ubi:UpliftGames/wally" = "v0.3.2"
 bun = "latest"
