@@ -11,438 +11,298 @@ let server: MultiplayerTestServer;
 let client: MultiplayerTestClient;
 
 beforeAll(async () => {
-  Bun.spawnSync(["rojo", "build", "tests/fixture/test.project.json", "-o", PLACE], {
-    stdout: "inherit",
-    stderr: "inherit",
-  });
+    Bun.spawnSync(["rojo", "build", "tests/fixture/test.project.json", "-o", PLACE], {
+        stdout: "inherit",
+        stderr: "inherit",
+    });
 
-  serve = Bun.spawn(["rodeo", "serve", "--port", String(PORT), "--ppid", String(process.pid)], {
-    stdout: "ignore",
-    stderr: "ignore",
-  });
+    serve = Bun.spawn(["rodeo", "serve", "--port", String(PORT), "--ppid", String(process.pid)], {
+        stdout: "ignore",
+        stderr: "ignore",
+    });
 
-  session = await RodeoClient.connect(`localhost:${PORT}`);
-  server = await (await session.getLocalStudio()).startMultiplayerTest({ placeFile: resolve(PLACE) });
-  client = await server.connectClient();
+    session = await RodeoClient.connect(`localhost:${PORT}`);
+    server = await (await session.getLocalStudio()).startMultiplayerTest({ placeFile: resolve(PLACE) });
+    client = await server.connectClient();
 }, 30_000)
 
 afterAll(async () => {
-  await client.disconnect();
-  await server.close();
-  await session.close();
-  serve?.kill();
+    await client.disconnect();
+    await server.close();
+    await session.close();
+    serve?.kill();
 }, 30_000)
 
+function runServer(body: string) {
+    return server.runCode({
+        target: "play:server",
+        cacheRequires: true,
+        source: /* lua */ `
+            local replicator = require(game:GetService("ServerScriptService").server.replicator)
+            local world = require(game.ReplicatedStorage.shared.world)
+            local cts = require(game.ReplicatedStorage.shared.cts)
+            local Jecs = require(game.ReplicatedStorage.packages.jecs)
+            ${body}
+        `,
+    })
+}
+
+function runClient(body: string) {
+    return client.runCode({
+        target: "play:client",
+        cacheRequires: true,
+        showReturn: true,
+        source: /* lua */ `
+            local world = require(game.ReplicatedStorage.shared.world)
+            local cts = require(game.ReplicatedStorage.shared.cts)
+            ${body}
+        `,
+    })
+}
+
 describe("imperative api", () => {
-  test("reconciles an instance in a replicated container", async () => {
-    await server.runCode({
-      target: "play:server",
-      cacheRequires: true,
-      source: /* lua */ `
-          local replicator = require(game:GetService("ServerScriptService").server.replicator)
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
+    test("reconciles an instance in a replicated container", async () => {
+        await runServer(/* lua */ `
+            local part = Instance.new("Part")
+            part.Name = "imperative_replicated"
+            part.Anchored = true
+            part.Parent = workspace
 
-          local part = Instance.new("Part")
-          part.Name = "imperative_replicated"
-          part.Anchored = true
-          part.Parent = workspace
+            local e = world:entity()
+            world:set(e, cts.Target, part)
+            replicator:set_networked(e)
+            replicator:set_instance(e, cts.Target)
+        `)
 
-          local e = world:entity()
-          world:set(e, cts.Target, part)
-          replicator:set_networked(e)
-          replicator:set_instance(e, cts.Target)
-      `,
+        const result = await runClient(/* lua */ `
+            task.wait(1)
+            for _, inst in world:query(cts.Target) do
+                if typeof(inst) == "Instance" and inst.Name == "imperative_replicated" then
+                    return true
+                end
+            end
+            return false
+        `)
+
+        expect(result.output).toContain("true")
     })
 
-    const result = await client.runCode({
-      target: "play:client",
-      cacheRequires: true,
-      showReturn: true,
-      source: /* lua */ `
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
+    test("defers until the instance enters a replicated container", async () => {
+        await runServer(/* lua */ `
+            local part = Instance.new("Part")
+            part.Name = "imperative_deferred"
+            part.Anchored = true
+            part.Parent = game:GetService("ServerStorage")
 
-          task.wait(1)
-          for _, inst in world:query(cts.Target) do
-              if typeof(inst) == "Instance" and inst.Name == "imperative_replicated" then
-                  return true
-              end
-          end
-          return false
-      `,
+            local e = world:entity()
+            world:set(e, cts.Target, part)
+            replicator:set_networked(e)
+            replicator:set_instance(e, cts.Target)
+        `)
+
+        const before = await runClient(/* lua */ `
+            task.wait(1)
+            for _, inst in world:query(cts.Target) do
+                if typeof(inst) == "Instance" and inst.Name == "imperative_deferred" then
+                    return true
+                end
+            end
+            return false
+        `)
+
+        expect(before.output).toContain("false")
+
+        await runServer(/* lua */ `
+            game:GetService("ServerStorage"):FindFirstChild("imperative_deferred").Parent = workspace
+        `)
+
+        const after = await runClient(/* lua */ `
+            task.wait(1)
+            for _, inst in world:query(cts.Target) do
+                if typeof(inst) == "Instance" and inst.Name == "imperative_deferred" then
+                    return true
+                end
+            end
+            return false
+        `)
+
+        expect(after.output).toContain("true")
     })
 
-    expect(result.output).toContain("true")
-  })
+    test("stops replicating the instance when stopped", async () => {
+        await runServer(/* lua */ `
+            local part = Instance.new("Part")
+            part.Name = "imperative_stopped"
+            part.Anchored = true
+            part.Parent = workspace
 
-  test("defers until the instance enters a replicated container", async () => {
-    await server.runCode({
-      target: "play:server",
-      cacheRequires: true,
-      source: /* lua */ `
-          local replicator = require(game:GetService("ServerScriptService").server.replicator)
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
+            local e = world:entity()
+            world:set(e, cts.Target, part)
+            replicator:set_networked(e)
+            replicator:set_instance(e, cts.Target)
+        `)
 
-          local part = Instance.new("Part")
-          part.Name = "imperative_deferred"
-          part.Anchored = true
-          part.Parent = game:GetService("ServerStorage")
+        const before = await runClient(/* lua */ `
+            task.wait(1)
+            for _, inst in world:query(cts.Target) do
+                if typeof(inst) == "Instance" and inst.Name == "imperative_stopped" then
+                    return true
+                end
+            end
+            return false
+        `)
 
-          local e = world:entity()
-          world:set(e, cts.Target, part)
-          replicator:set_networked(e)
-          replicator:set_instance(e, cts.Target)
-      `,
+        expect(before.output).toContain("true")
+
+        await runServer(/* lua */ `
+            for e, inst in world:query(cts.Target) do
+                if typeof(inst) == "Instance" and inst.Name == "imperative_stopped" then
+                    replicator:stop_instance(e, cts.Target)
+                    break
+                end
+            end
+        `)
+
+        const after = await runClient(/* lua */ `
+            task.wait(1)
+            for _, inst in world:query(cts.Target) do
+                if typeof(inst) == "Instance" and inst.Name == "imperative_stopped" then
+                    return true
+                end
+            end
+            return false
+        `)
+
+        expect(after.output).toContain("false")
     })
-
-    const before = await client.runCode({
-      target: "play:client",
-      cacheRequires: true,
-      showReturn: true,
-      source: /* lua */ `
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
-
-          task.wait(1)
-          for _, inst in world:query(cts.Target) do
-              if typeof(inst) == "Instance" and inst.Name == "imperative_deferred" then
-                  return true
-              end
-          end
-          return false
-      `,
-    })
-
-    expect(before.output).toContain("false")
-
-    await server.runCode({
-      target: "play:server",
-      cacheRequires: true,
-      source: /* lua */ `game:GetService("ServerStorage"):FindFirstChild("imperative_deferred").Parent = workspace`,
-    })
-
-    const after = await client.runCode({
-      target: "play:client",
-      cacheRequires: true,
-      showReturn: true,
-      source: /* lua */ `
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
-
-          task.wait(1)
-          for _, inst in world:query(cts.Target) do
-              if typeof(inst) == "Instance" and inst.Name == "imperative_deferred" then
-                  return true
-              end
-          end
-          return false
-      `,
-    })
-
-    expect(after.output).toContain("true")
-  })
-
-  test("stops replicating the instance when stopped", async () => {
-    await server.runCode({
-      target: "play:server",
-      cacheRequires: true,
-      source: /* lua */ `
-          local replicator = require(game:GetService("ServerScriptService").server.replicator)
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
-
-          local part = Instance.new("Part")
-          part.Name = "imperative_stopped"
-          part.Anchored = true
-          part.Parent = workspace
-
-          local e = world:entity()
-          world:set(e, cts.Target, part)
-          replicator:set_networked(e)
-          replicator:set_instance(e, cts.Target)
-      `,
-    })
-
-    const before = await client.runCode({
-      target: "play:client",
-      cacheRequires: true,
-      showReturn: true,
-      source: /* lua */ `
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
-
-          task.wait(1)
-          for _, inst in world:query(cts.Target) do
-              if typeof(inst) == "Instance" and inst.Name == "imperative_stopped" then
-                  return true
-              end
-          end
-          return false
-      `,
-    })
-
-    expect(before.output).toContain("true")
-
-    await server.runCode({
-      target: "play:server",
-      cacheRequires: true,
-      source: /* lua */ `
-          local replicator = require(game:GetService("ServerScriptService").server.replicator)
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
-
-          for e, inst in world:query(cts.Target) do
-              if typeof(inst) == "Instance" and inst.Name == "imperative_stopped" then
-                  replicator:stop_instance(e, cts.Target)
-                  break
-              end
-          end
-      `,
-    })
-
-    const after = await client.runCode({
-      target: "play:client",
-      cacheRequires: true,
-      showReturn: true,
-      source: /* lua */ `
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
-
-          task.wait(1)
-          for _, inst in world:query(cts.Target) do
-              if typeof(inst) == "Instance" and inst.Name == "imperative_stopped" then
-                  return true
-              end
-          end
-          return false
-      `,
-    })
-
-    expect(after.output).toContain("false")
-  })
 })
 
 describe("component api", () => {
-  test("reconciles an instance in a replicated container", async () => {
-    await server.runCode({
-      target: "play:server",
-      cacheRequires: true,
-      source: /* lua */ `
-          local replicator = require(game:GetService("ServerScriptService").server.replicator)
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
-          local Jecs = require(game.ReplicatedStorage.packages.jecs)
+    test("reconciles an instance in a replicated container", async () => {
+        await runServer(/* lua */ `
+            local part = Instance.new("Part")
+            part.Name = "component_replicated"
+            part.Anchored = true
+            part.Parent = workspace
 
-          local part = Instance.new("Part")
-          part.Name = "component_replicated"
-          part.Anchored = true
-          part.Parent = workspace
+            local e = world:entity()
+            world:set(e, cts.Target, part)
+            replicator:set_networked(e)
+            world:add(e, Jecs.pair(replicator.components.instance, cts.Target))
+        `)
 
-          local e = world:entity()
-          world:set(e, cts.Target, part)
-          replicator:set_networked(e)
-          world:add(e, Jecs.pair(replicator.components.instance, cts.Target))
-      `,
+        const result = await runClient(/* lua */ `
+            task.wait(1)
+            for _, inst in world:query(cts.Target) do
+                if typeof(inst) == "Instance" and inst.Name == "component_replicated" then
+                    return true
+                end
+            end
+            return false
+        `)
+
+        expect(result.output).toContain("true")
     })
 
-    const result = await client.runCode({
-      target: "play:client",
-      cacheRequires: true,
-      showReturn: true,
-      source: /* lua */ `
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
+    test("defers until the instance enters a replicated container", async () => {
+        await runServer(/* lua */ `
+            local part = Instance.new("Part")
+            part.Name = "component_deferred"
+            part.Anchored = true
+            part.Parent = game:GetService("ServerStorage")
 
-          task.wait(1)
-          for _, inst in world:query(cts.Target) do
-              if typeof(inst) == "Instance" and inst.Name == "component_replicated" then
-                  return true
-              end
-          end
-          return false
-      `,
+            local e = world:entity()
+            world:set(e, cts.Target, part)
+            replicator:set_networked(e)
+            world:add(e, Jecs.pair(replicator.components.instance, cts.Target))
+        `)
+
+        const before = await runClient(/* lua */ `
+            task.wait(1)
+            for _, inst in world:query(cts.Target) do
+                if typeof(inst) == "Instance" and inst.Name == "component_deferred" then
+                    return true
+                end
+            end
+            return false
+        `)
+
+        expect(before.output).toContain("false")
+
+        await runServer(/* lua */ `
+            game:GetService("ServerStorage"):FindFirstChild("component_deferred").Parent = workspace
+        `)
+
+        const after = await runClient(/* lua */ `
+            task.wait(1)
+            for _, inst in world:query(cts.Target) do
+                if typeof(inst) == "Instance" and inst.Name == "component_deferred" then
+                    return true
+                end
+            end
+            return false
+        `)
+
+        expect(after.output).toContain("true")
     })
 
-    expect(result.output).toContain("true")
-  })
+    test("stops replicating the instance when stopped", async () => {
+        await runServer(/* lua */ `
+            local part = Instance.new("Part")
+            part.Name = "component_stopped"
+            part.Anchored = true
+            part.Parent = workspace
 
-  test("defers until the instance enters a replicated container", async () => {
-    await server.runCode({
-      target: "play:server",
-      cacheRequires: true,
-      source: /* lua */ `
-          local replicator = require(game:GetService("ServerScriptService").server.replicator)
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
-          local Jecs = require(game.ReplicatedStorage.packages.jecs)
+            local e = world:entity()
+            world:set(e, cts.Target, part)
+            replicator:set_networked(e)
+            world:add(e, Jecs.pair(replicator.components.instance, cts.Target))
+        `)
 
-          local part = Instance.new("Part")
-          part.Name = "component_deferred"
-          part.Anchored = true
-          part.Parent = game:GetService("ServerStorage")
+        const before = await runClient(/* lua */ `
+            task.wait(1)
+            for _, inst in world:query(cts.Target) do
+                if typeof(inst) == "Instance" and inst.Name == "component_stopped" then
+                    return true
+                end
+            end
+            return false
+        `)
 
-          local e = world:entity()
-          world:set(e, cts.Target, part)
-          replicator:set_networked(e)
-          world:add(e, Jecs.pair(replicator.components.instance, cts.Target))
-      `,
+        expect(before.output).toContain("true")
+
+        await runServer(/* lua */ `
+            for e, inst in world:query(cts.Target) do
+                if typeof(inst) == "Instance" and inst.Name == "component_stopped" then
+                    world:remove(e, Jecs.pair(replicator.components.instance, cts.Target))
+                    break
+                end
+            end
+        `)
+
+        const after = await runClient(/* lua */ `
+            task.wait(1)
+            for _, inst in world:query(cts.Target) do
+                if typeof(inst) == "Instance" and inst.Name == "component_stopped" then
+                    return true
+                end
+            end
+            return false
+        `)
+
+        expect(after.output).toContain("false")
     })
-
-    const before = await client.runCode({
-      target: "play:client",
-      cacheRequires: true,
-      showReturn: true,
-      source: /* lua */ `
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
-
-          task.wait(1)
-          for _, inst in world:query(cts.Target) do
-              if typeof(inst) == "Instance" and inst.Name == "component_deferred" then
-                  return true
-              end
-          end
-          return false
-      `,
-    })
-
-    expect(before.output).toContain("false")
-
-    await server.runCode({
-      target: "play:server",
-      cacheRequires: true,
-      source: /* lua */ `game:GetService("ServerStorage"):FindFirstChild("component_deferred").Parent = workspace`,
-    })
-
-    const after = await client.runCode({
-      target: "play:client",
-      cacheRequires: true,
-      showReturn: true,
-      source: /* lua */ `
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
-
-          task.wait(1)
-          for _, inst in world:query(cts.Target) do
-              if typeof(inst) == "Instance" and inst.Name == "component_deferred" then
-                  return true
-              end
-          end
-          return false
-      `,
-    })
-
-    expect(after.output).toContain("true")
-  })
-
-  test("stops replicating the instance when stopped", async () => {
-    await server.runCode({
-      target: "play:server",
-      cacheRequires: true,
-      source: /* lua */ `
-          local replicator = require(game:GetService("ServerScriptService").server.replicator)
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
-          local Jecs = require(game.ReplicatedStorage.packages.jecs)
-
-          local part = Instance.new("Part")
-          part.Name = "component_stopped"
-          part.Anchored = true
-          part.Parent = workspace
-
-          local e = world:entity()
-          world:set(e, cts.Target, part)
-          replicator:set_networked(e)
-          world:add(e, Jecs.pair(replicator.components.instance, cts.Target))
-      `,
-    })
-
-    const before = await client.runCode({
-      target: "play:client",
-      cacheRequires: true,
-      showReturn: true,
-      source: /* lua */ `
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
-
-          task.wait(1)
-          for _, inst in world:query(cts.Target) do
-              if typeof(inst) == "Instance" and inst.Name == "component_stopped" then
-                  return true
-              end
-          end
-          return false
-      `,
-    })
-
-    expect(before.output).toContain("true")
-
-    await server.runCode({
-      target: "play:server",
-      cacheRequires: true,
-      source: /* lua */ `
-          local replicator = require(game:GetService("ServerScriptService").server.replicator)
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
-          local Jecs = require(game.ReplicatedStorage.packages.jecs)
-
-          for e, inst in world:query(cts.Target) do
-              if typeof(inst) == "Instance" and inst.Name == "component_stopped" then
-                  world:remove(e, Jecs.pair(replicator.components.instance, cts.Target))
-                  break
-              end
-          end
-      `,
-    })
-
-    const after = await client.runCode({
-      target: "play:client",
-      cacheRequires: true,
-      showReturn: true,
-      source: /* lua */ `
-          local world = require(game.ReplicatedStorage.shared.world)
-          local cts = require(game.ReplicatedStorage.shared.cts)
-
-          task.wait(1)
-          for _, inst in world:query(cts.Target) do
-              if typeof(inst) == "Instance" and inst.Name == "component_stopped" then
-                  return true
-              end
-          end
-          return false
-      `,
-    })
-
-    expect(after.output).toContain("false")
-  })
 })
 
 test("replicates a plain value component through the fixture", async () => {
-  await server.runCode({
-    target: "play:server",
-    cacheRequires: true,
-    source: /* lua */ `
-        local replicator = require(game:GetService("ServerScriptService").server.replicator)
-        local world = require(game.ReplicatedStorage.shared.world)
-        local cts = require(game.ReplicatedStorage.shared.cts)
-
+    await runServer(/* lua */ `
         local e = world:entity()
         world:set(e, cts.Health, 100)
         replicator:set_networked(e)
         replicator:set_reliable(e, cts.Health)
-    `,
-  })
+    `)
 
-  const result = await client.runCode({
-    target: "play:client",
-    cacheRequires: true,
-    showReturn: true,
-    source: /* lua */ `
-        local world = require(game.ReplicatedStorage.shared.world)
-        local cts = require(game.ReplicatedStorage.shared.cts)
-
+    const result = await runClient(/* lua */ `
         task.wait(1)
         for _, health in world:query(cts.Health) do
             if health == 100 then
@@ -450,8 +310,7 @@ test("replicates a plain value component through the fixture", async () => {
             end
         end
         return false
-    `,
-  })
+    `)
 
-  expect(result.output).toContain("100")
+    expect(result.output).toContain("100")
 })
