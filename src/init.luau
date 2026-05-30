@@ -1,9 +1,6 @@
 local CollectionService = game:GetService("CollectionService")
 local HttpService = game:GetService("HttpService")
 
--- Dependencies resolve as siblings of this package (the standard pesde Roblox
--- layout: pesde links each dependency alias next to the package). No string
--- requires, no darklua build step.
 local Jecs = require(script.Parent.jecs)
 local pair = Jecs.pair
 local pair_second = Jecs.pair_second
@@ -17,9 +14,6 @@ local observer = JecsUtils.observer
 local TAG = "replecs-roblox.Instance"
 local ATTR = "replecs-roblox.InstanceGuid"
 
--- Preregister so every world sees the same component IDs.
--- InstanceGuid carries Replecs.shared so replecs treats it as a known
--- cross-side component during handshakes.
 local InstanceGuid = Jecs.component() :: Jecs.Id<string>
 Jecs.meta(InstanceGuid, Jecs.Name, "replecs-roblox.InstanceGuid")
 Jecs.meta(InstanceGuid, Replecs.shared)
@@ -105,9 +99,6 @@ export type RbxComponents = {
 	instance: Jecs.Entity,
 }
 
--- The `components` field is intersected with replecs's own components table at
--- the ExtendedServer/ExtendedClient level, so `replicator.components.shared`
--- still works alongside `replicator.components.instance`.
 export type ServerExtension = {
 	components: RbxComponents,
 	set_instance: (self: ServerExtension, entity: Jecs.Entity, component: Jecs.Entity) -> (),
@@ -198,8 +189,6 @@ local function extend_server(replicator: Replecs.Server): ExtendedServer
 		end)
 	end
 
-	-- The InstanceProtocol pair IS the subscription. Bridge installs the per-component
-	-- hooks the first time a protocol is added, and syncs any value that's already there.
 	world:added(InstanceProtocol, function(entity, p)
 		local component = pair_second(world, p)
 		ensureComponentHook(component)
@@ -213,7 +202,7 @@ local function extend_server(replicator: Replecs.Server): ExtendedServer
 	end)
 
 	local extended = replicator :: ExtendedServer
-	-- Mutates replecs's global components table (same object in preregister mode).
+
 	extended.components.instance_guid = InstanceGuid
 	extended.components.instance = InstanceProtocol
 	extended.set_instance = function(_, entity, component)

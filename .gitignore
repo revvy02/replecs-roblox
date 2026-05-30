@@ -14,4 +14,7 @@
 /place.rbxl
 /*.rbxl.lock
 
+# rodeo runtime temp (profiles / logs)
+/.rodeo/
+
 .DS_Store
