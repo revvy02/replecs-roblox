@@ -1,19 +1,3 @@
---[[
-    Bridges replecs's component-driven replication with Roblox Instance
-    references. Components are preregistered (see how_to/011 in jecs) so
-    InstanceGuid + InstanceProtocol share IDs across every world, matching
-    replecs's own preregistration model.
-
-    Usage:
-      local replicator = replecs.create_server(world)
-      rbx.extend_server(replicator)
-      replicator:set_instance(entity, cts.BasePart)  -- starts replicating
-
-    Two equivalent ways to drive replication:
-      world:add(e, pair(replicator.components.instance, cts.BasePart))   -- declarative
-      replicator:set_instance(e, cts.BasePart)                            -- imperative
-]]
-
 local CollectionService = game:GetService("CollectionService")
 local HttpService = game:GetService("HttpService")
 
