@@ -1,5 +1,4 @@
 local CollectionService = game:GetService("CollectionService")
-local HttpService = game:GetService("HttpService")
 
 local Jecs = require(script.Parent.jecs)
 local pair = Jecs.pair
@@ -12,34 +11,45 @@ local monitor = JecsUtils.monitor
 local observer = JecsUtils.observer
 
 local TAG = "replecs-roblox.Instance"
-local ATTR = "replecs-roblox.InstanceGuid"
+local ATTR = "replecs-roblox.InstanceId"
 
-local InstanceGuid = Jecs.component() :: Jecs.Id<string>
-Jecs.meta(InstanceGuid, Jecs.Name, "replecs-roblox.InstanceGuid")
-Jecs.meta(InstanceGuid, Replecs.shared)
+local InstanceId = Jecs.component() :: Jecs.Id<number>
+Jecs.meta(InstanceId, Jecs.Name, "replecs-roblox.InstanceId")
+Jecs.meta(InstanceId, Replecs.shared)
+Jecs.meta(InstanceId, Replecs.serdes, {
+	bytespan = 4,
+	serialize = function(id: number): buffer
+		local b = buffer.create(4)
+		buffer.writeu32(b, 0, id)
+		return b
+	end,
+	deserialize = function(b: buffer): number
+		return buffer.readu32(b, 0)
+	end,
+})
 
 local InstanceProtocol = Jecs.component()
 Jecs.meta(InstanceProtocol, Jecs.Name, "replecs-roblox.InstanceProtocol")
 
 local function setupNetworkedInstanceReconciler(world: Jecs.World)
-	local guidToEntityComponents = {}
-	local guidToInstance = {}
+	local idToEntityComponents = {}
+	local idToInstance = {}
 	local instanceToEntityComponents = {}
 
-	local function ensureMap(guid)
-		local map = guidToEntityComponents[guid]
+	local function ensureMap(id)
+		local map = idToEntityComponents[id]
 		if not map then
 			map = {}
-			guidToEntityComponents[guid] = map
+			idToEntityComponents[id] = map
 		end
 		return map
 	end
 
 	local function instanceAdded(instance)
-		local guid = instance:GetAttribute(ATTR)
-		local map = ensureMap(guid)
+		local id = instance:GetAttribute(ATTR)
+		local map = ensureMap(id)
 
-		guidToInstance[guid] = instance
+		idToInstance[id] = instance
 		instanceToEntityComponents[instance] = map
 
 		for e, components in map do
@@ -61,32 +71,32 @@ local function setupNetworkedInstanceReconciler(world: Jecs.World)
 		instanceToEntityComponents[instance] = nil
 	end
 
-	world:added(InstanceGuid, function(e, p, guid)
+	world:added(InstanceId, function(e, p, id)
 		local ct = pair_second(world, p)
-		local map = ensureMap(guid)
+		local map = ensureMap(id)
 
 		if not map[e] then
 			map[e] = {}
 		end
 		map[e][ct] = true
 
-		local instance = guidToInstance[guid]
+		local instance = idToInstance[id]
 		if instance then
 			world:set(e, ct, instance)
 		end
 	end)
 
-	world:removed(InstanceGuid, function(e, p)
+	world:removed(InstanceId, function(e, p)
 		local ct = pair_second(world, p)
-		local guid = world:get(e, p)
-		local map = guidToEntityComponents[guid]
+		local id = world:get(e, p)
+		local map = idToEntityComponents[id]
 
 		map[e][ct] = nil
 		if not next(map[e]) then
 			map[e] = nil
 		end
 
-		-- The guid pair is the signal that this entity references an instance.
+		-- The id pair is the signal that this entity references an instance.
 		-- When it stops replicating, drop the resolved component. (Client-only:
 		-- the server never runs this reconciler, so the caller's authoritative
 		-- component is never touched here.)
@@ -101,7 +111,7 @@ local function setupNetworkedInstanceReconciler(world: Jecs.World)
 end
 
 export type RbxComponents = {
-	instance_guid: Jecs.Id<string>,
+	instance_id: Jecs.Id<number>,
 	instance: Jecs.Entity,
 }
 
@@ -120,73 +130,41 @@ export type ExtendedClient = Replecs.Client & ClientExtension
 
 local function extend_server(replicator: Replecs.Server): ExtendedServer
 	local world = replicator.world
+	local nextId = 0
 
-	-- The reconciler is client-only: the server already holds the instances and
-	-- reads their guid attribute directly, so it has nothing to reconcile.
-
-	-- We do NOT handle the case where two distinct Instances carry the same guid
-	-- (e.g. a live networked instance got Clone()'d, or a template in storage was
-	-- replicated before being cloned, or a saved place baked the attribute in).
-	-- That's indicative of a different core issue — clone from templates, don't
-	-- replicate templates. silently regenerating here would just paper over
-	-- the bug.
-	--
-	-- Reference implementation if we ever want a debug mode that wipes inherited
-	-- identity on first-sight of an Instance (membership in the weak-keyed set
-	-- means "already given a session-unique identity this run"):
-	--
-	-- local initializedInstances = setmetatable({} :: { [Instance]: true }, { __mode = "k" })
-	--
-	-- local function ensureInstanceGuid(instance: Instance): string
-	-- 	if initializedInstances[instance] then
-	-- 		return instance:GetAttribute(ATTR) :: string
-	-- 	end
-	-- 	initializedInstances[instance] = true
-	-- 	instance:RemoveTag(TAG)
-	-- 	local guid = HttpService:GenerateGUID(false)
-	-- 	instance:SetAttribute(ATTR, guid)
-	-- 	instance:AddTag(TAG)
-	-- 	return guid
-	-- end
-	--
-	-- local function replicateInstance(entity, component, instance: Instance)
-	-- 	local pairId = pair(InstanceGuid, component)
-	-- 	world:set(entity, pairId, ensureInstanceGuid(instance))
-	-- 	replicator:set_pair(entity, pairId)
-	-- end
 	local function replicateInstance(entity, component, instance: Instance)
-		local guid = instance:GetAttribute(ATTR)
-		local pairId = pair(InstanceGuid, component)
+		local id = instance:GetAttribute(ATTR)
+		local pairId = pair(InstanceId, component)
 
-		if not guid then
-			guid = HttpService:GenerateGUID(false)
-			instance:SetAttribute(ATTR, guid)
+		if not id then
+			nextId += 1
+			id = nextId
+			instance:SetAttribute(ATTR, id)
 			instance:AddTag(TAG)
 		end
 
-		world:set(entity, pairId, guid)
+		world:set(entity, pairId, id)
 		replicator:set_pair(entity, pairId)
 	end
 
 	local function stopReplicateInstance(entity, component, deleting, keep)
-		local pairId = pair(InstanceGuid, component)
+		local pairId = pair(InstanceId, component)
 
 		-- Removing the protocol pair triggers both the InstanceProtocol-removed
 		-- hook and the component monitor, so teardown can run twice; once the
-		-- guid pair is gone there's nothing left to do.
+		-- id pair is gone there's nothing left to do.
 		if not world:has(entity, pairId) then
 			return
 		end
 
 		-- keep = true stops tracking without telling the client to drop the
-		-- guid pair, so it keeps resolving the instance for as long as it exists.
+		-- id pair, so it keeps resolving the instance for as long as it exists.
 		replicator:stop_pair(entity, pairId, keep)
 		if not deleting then
 			world:remove(entity, pairId)
 		end
 	end
 
-	-- gates the per-component Jecs hooks so they install exactly once
 	local hookedComponents: { [any]: true } = {}
 
 	local function ensureComponentHook(component)
@@ -220,7 +198,7 @@ local function extend_server(replicator: Replecs.Server): ExtendedServer
 
 	local extended = replicator :: ExtendedServer
 
-	extended.components.instance_guid = InstanceGuid
+	extended.components.instance_id = InstanceId
 	extended.components.instance = InstanceProtocol
 	extended.set_instance = function(_, entity, component)
 		world:add(entity, pair(InstanceProtocol, component))
@@ -237,7 +215,7 @@ local function extend_client(replicator: Replecs.Client): ExtendedClient
 	setupNetworkedInstanceReconciler(replicator.world)
 
 	local extended = replicator :: ExtendedClient
-	extended.components.instance_guid = InstanceGuid
+	extended.components.instance_id = InstanceId
 	extended.components.instance = InstanceProtocol
 
 	return extended
@@ -247,6 +225,6 @@ return {
 	extend_server = extend_server,
 	extend_client = extend_client,
 
-	instance_guid = InstanceGuid,
+	instance_id = InstanceId,
 	instance = InstanceProtocol,
 }

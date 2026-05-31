@@ -1,7 +1,7 @@
 [package]
 name = "revvy02/replecs-roblox"
 description = "Bridges replecs component-driven replication with Roblox Instance references"
-version = "0.0.2"
+version = "0.0.3"
 registry = "https://github.com/UpliftGames/wally-index"
 realm = "shared"
 
