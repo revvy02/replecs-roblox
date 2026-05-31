@@ -85,6 +85,12 @@ local function setupNetworkedInstanceReconciler(world: Jecs.World)
 		if not next(map[e]) then
 			map[e] = nil
 		end
+
+		-- The guid pair is the signal that this entity references an instance.
+		-- When it stops replicating, drop the resolved component. (Client-only:
+		-- the server never runs this reconciler, so the caller's authoritative
+		-- component is never touched here.)
+		world:remove(e, ct)
 	end)
 
 	for _, instance in CollectionService:GetTagged(TAG) do
@@ -102,7 +108,7 @@ export type RbxComponents = {
 export type ServerExtension = {
 	components: RbxComponents,
 	set_instance: (self: ServerExtension, entity: Jecs.Entity, component: Jecs.Entity) -> (),
-	stop_instance: (self: ServerExtension, entity: Jecs.Entity, component: Jecs.Entity) -> (),
+	stop_instance: (self: ServerExtension, entity: Jecs.Entity, component: Jecs.Entity, keep: boolean?) -> (),
 }
 
 export type ClientExtension = {
@@ -115,7 +121,8 @@ export type ExtendedClient = Replecs.Client & ClientExtension
 local function extend_server(replicator: Replecs.Server): ExtendedServer
 	local world = replicator.world
 
-	setupNetworkedInstanceReconciler(world)
+	-- The reconciler is client-only: the server already holds the instances and
+	-- reads their guid attribute directly, so it has nothing to reconcile.
 
 	-- We do NOT handle the case where two distinct Instances carry the same guid
 	-- (e.g. a live networked instance got Clone()'d, or a template in storage was
@@ -161,9 +168,19 @@ local function extend_server(replicator: Replecs.Server): ExtendedServer
 		replicator:set_pair(entity, pairId)
 	end
 
-	local function stopReplicateInstance(entity, component, deleting)
+	local function stopReplicateInstance(entity, component, deleting, keep)
 		local pairId = pair(InstanceGuid, component)
-		replicator:stop_pair(entity, pairId)
+
+		-- Removing the protocol pair triggers both the InstanceProtocol-removed
+		-- hook and the component monitor, so teardown can run twice; once the
+		-- guid pair is gone there's nothing left to do.
+		if not world:has(entity, pairId) then
+			return
+		end
+
+		-- keep = true stops tracking without telling the client to drop the
+		-- guid pair, so it keeps resolving the instance for as long as it exists.
+		replicator:stop_pair(entity, pairId, keep)
 		if not deleting then
 			world:remove(entity, pairId)
 		end
@@ -208,7 +225,8 @@ local function extend_server(replicator: Replecs.Server): ExtendedServer
 	extended.set_instance = function(_, entity, component)
 		world:add(entity, pair(InstanceProtocol, component))
 	end
-	extended.stop_instance = function(_, entity, component)
+	extended.stop_instance = function(_, entity, component, keep)
+		stopReplicateInstance(entity, component, false, keep)
 		world:remove(entity, pair(InstanceProtocol, component))
 	end
 

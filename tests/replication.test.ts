@@ -93,7 +93,6 @@ describe("imperative api", () => {
         `)
 
         const result = await runClient(/* lua */ `
-            task.wait(1)
             return findAnyInstanceComponent("imperative_replicated") ~= nil
         `)
 
@@ -114,7 +113,6 @@ describe("imperative api", () => {
         `)
 
         const before = await runClient(/* lua */ `
-            task.wait(1)
             return findAnyInstanceComponent("imperative_deferred") ~= nil
         `)
 
@@ -125,7 +123,6 @@ describe("imperative api", () => {
         `)
 
         const after = await runClient(/* lua */ `
-            task.wait(1)
             return findAnyInstanceComponent("imperative_deferred") ~= nil
         `)
 
@@ -146,7 +143,6 @@ describe("imperative api", () => {
         `)
 
         const before = await runClient(/* lua */ `
-            task.wait(1)
             return findAnyInstanceComponent("imperative_stopped") ~= nil
         `)
 
@@ -162,11 +158,45 @@ describe("imperative api", () => {
         `)
 
         const after = await runClient(/* lua */ `
-            task.wait(1)
             return findAnyInstanceComponent("imperative_stopped") ~= nil
         `)
 
         expect(after.return).toBe(false)
+    })
+
+    test("keeps the reconciled instance when stopped with keep", async () => {
+        await runServer(/* lua */ `
+            local part = Instance.new("Part")
+            part.Name = "imperative_kept"
+            part.Anchored = true
+            part.Parent = workspace
+
+            local e = world:entity()
+            world:set(e, cts.Target, part)
+            replicator:set_networked(e)
+            replicator:set_instance(e, cts.Target)
+        `)
+
+        const before = await runClient(/* lua */ `
+            return findAnyInstanceComponent("imperative_kept") ~= nil
+        `)
+
+        expect(before.return).toBe(true)
+
+        await runServer(/* lua */ `
+            for e, inst in world:query(cts.Target) do
+                if typeof(inst) == "Instance" and inst.Name == "imperative_kept" then
+                    replicator:stop_instance(e, cts.Target, true)
+                    break
+                end
+            end
+        `)
+
+        const after = await runClient(/* lua */ `
+            return findAnyInstanceComponent("imperative_kept") ~= nil
+        `)
+
+        expect(after.return).toBe(true)
     })
 })
 
@@ -185,7 +215,6 @@ describe("component api", () => {
         `)
 
         const result = await runClient(/* lua */ `
-            task.wait(1)
             return findAnyInstanceComponent("component_replicated") ~= nil
         `)
 
@@ -206,7 +235,6 @@ describe("component api", () => {
         `)
 
         const before = await runClient(/* lua */ `
-            task.wait(1)
             return findAnyInstanceComponent("component_deferred") ~= nil
         `)
 
@@ -217,7 +245,6 @@ describe("component api", () => {
         `)
 
         const after = await runClient(/* lua */ `
-            task.wait(1)
             return findAnyInstanceComponent("component_deferred") ~= nil
         `)
 
@@ -238,7 +265,6 @@ describe("component api", () => {
         `)
 
         const before = await runClient(/* lua */ `
-            task.wait(1)
             return findAnyInstanceComponent("component_stopped") ~= nil
         `)
 
@@ -254,7 +280,6 @@ describe("component api", () => {
         `)
 
         const after = await runClient(/* lua */ `
-            task.wait(1)
             return findAnyInstanceComponent("component_stopped") ~= nil
         `)
 
@@ -275,7 +300,6 @@ describe("streaming", () => {
 
         // 2-3. nothing is replicated yet, so streaming alone must keep it off the client
         const unstreamed = await runClient(/* lua */ `
-            task.wait(1)
             return workspace:FindFirstChild("streaming_part") ~= nil
         `)
 
@@ -293,7 +317,6 @@ describe("streaming", () => {
         // 5-6. the entity replicates, but the instance is still streamed out — absent from
         // both the client workspace and the client entity (the reconciler can't resolve it)
         const deferred = await runClient(/* lua */ `
-            task.wait(1)
             return {
                 inWorkspace = workspace:FindFirstChild("streaming_part") ~= nil,
                 onEntity = findAnyInstanceComponent("streaming_part") ~= nil,
@@ -312,7 +335,6 @@ describe("streaming", () => {
 
         // 8-9. the tagged instance streams in and the reconciler resolves it onto the entity
         const streamed = await runClient(/* lua */ `
-            task.wait(1)
             return {
                 inWorkspace = workspace:FindFirstChild("streaming_part") ~= nil,
                 onEntity = findAnyInstanceComponent("streaming_part") ~= nil,
@@ -332,7 +354,6 @@ test("replicates a plain value component through the fixture", async () => {
     `)
 
     const result = await runClient(/* lua */ `
-        task.wait(1)
         for _, health in world:query(cts.Health) do
             if health == 100 then
                 return health
