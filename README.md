@@ -27,6 +27,8 @@ replicator:set_networked(e)
 
 replicator:set_instance(e, cts.BasePart)
 replicator:stop_instance(e, cts.BasePart)
+-- or, to keep the client's resolved instance after stopping:
+replicator:stop_instance(e, cts.BasePart, true)
 ```
 
 ### Declarative API
