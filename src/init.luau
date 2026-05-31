@@ -1,3 +1,6 @@
+--!optimize 2
+--!native
+
 local CollectionService = game:GetService("CollectionService")
 
 local Jecs = require(script.Parent.jecs)
