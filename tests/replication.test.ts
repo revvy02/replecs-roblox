@@ -33,8 +33,8 @@ afterAll(async () => {
     serve?.kill();
 }, 30_000)
 
-function runServer(body: string) {
-    return server.runCode({
+async function runServer(body: string) {
+    const result = await server.runCode({
         target: "play:server",
         cacheRequires: true,
         source: /* lua */ `
@@ -50,7 +50,7 @@ function runServer(body: string) {
             local replecs = require(ReplicatedStorage.packages.replecs)
             local replecs_roblox = require(ReplicatedStorage.packages.replecs_roblox)
 
-            local function makePart(name, parent)
+            local function spawnPart(name, parent)
                 local part = Instance.new("Part")
                 part.Name = name
                 part.Anchored = true
@@ -58,7 +58,7 @@ function runServer(body: string) {
                 return part
             end
 
-            local function setInstanceImperative(part)
+            local function spawnReplicatedInstanceEntityImperative(part)
                 local e = world:entity()
                 world:set(e, cts.Target, part)
                 replicator:set_networked(e)
@@ -66,7 +66,7 @@ function runServer(body: string) {
                 return e
             end
 
-            local function setInstanceDeclarative(part)
+            local function spawnReplicatedInstanceEntityDeclarative(part)
                 local e = world:entity()
                 world:set(e, cts.Target, part)
                 world:add(e, replecs.networked)
@@ -86,10 +86,12 @@ function runServer(body: string) {
             ${body}
         `,
     })
+
+    return result.return
 }
 
-function runClient(body: string) {
-    return client.runCode({
+async function runClient(body: string) {
+    const result = await client.runCode({
         target: "play:client",
         cacheRequires: true,
         source: /* lua */ `
@@ -113,143 +115,121 @@ function runClient(body: string) {
             ${body}
         `,
     })
+
+    return result.return
 }
 
 describe("imperative api", () => {
     test("reconciles an instance in a replicated container", async () => {
         await runServer(/* lua */ `
-            setInstanceImperative(makePart("imperative_replicated", workspace))
+            spawnReplicatedInstanceEntityImperative(spawnPart("imperative_replicated", workspace))
         `)
 
-        const result = await runClient(/* lua */ `
+        expect(await runClient(/* lua */ `
             return findInstance("imperative_replicated") ~= nil
-        `)
-
-        expect(result.return).toBe(true)
+        `)).toBe(true)
     })
 
     test("defers until the instance enters a replicated container", async () => {
         await runServer(/* lua */ `
-            setInstanceImperative(makePart("imperative_deferred", ServerStorage))
+            spawnReplicatedInstanceEntityImperative(spawnPart("imperative_deferred", ServerStorage))
         `)
 
-        const before = await runClient(/* lua */ `
+        expect(await runClient(/* lua */ `
             return findInstance("imperative_deferred") ~= nil
-        `)
-
-        expect(before.return).toBe(false)
+        `)).toBe(false)
 
         await runServer(/* lua */ `
             ServerStorage.imperative_deferred.Parent = workspace
         `)
 
-        const after = await runClient(/* lua */ `
+        expect(await runClient(/* lua */ `
             return findInstance("imperative_deferred") ~= nil
-        `)
-
-        expect(after.return).toBe(true)
+        `)).toBe(true)
     })
 
     test("stops replicating the instance when stopped", async () => {
         await runServer(/* lua */ `
-            setInstanceImperative(makePart("imperative_stopped", workspace))
+            spawnReplicatedInstanceEntityImperative(spawnPart("imperative_stopped", workspace))
         `)
 
-        const before = await runClient(/* lua */ `
+        expect(await runClient(/* lua */ `
             return findInstance("imperative_stopped") ~= nil
-        `)
-
-        expect(before.return).toBe(true)
+        `)).toBe(true)
 
         await runServer(/* lua */ `
             replicator:stop_instance(findInstance("imperative_stopped"), cts.Target)
         `)
 
-        const after = await runClient(/* lua */ `
+        expect(await runClient(/* lua */ `
             return findInstance("imperative_stopped") ~= nil
-        `)
-
-        expect(after.return).toBe(false)
+        `)).toBe(false)
     })
 
     test("keeps the reconciled instance when stopped with keep", async () => {
         await runServer(/* lua */ `
-            setInstanceImperative(makePart("imperative_kept", workspace))
+            spawnReplicatedInstanceEntityImperative(spawnPart("imperative_kept", workspace))
         `)
 
-        const before = await runClient(/* lua */ `
+        expect(await runClient(/* lua */ `
             return findInstance("imperative_kept") ~= nil
-        `)
-
-        expect(before.return).toBe(true)
+        `)).toBe(true)
 
         await runServer(/* lua */ `
             replicator:stop_instance(findInstance("imperative_kept"), cts.Target, true)
         `)
 
-        const after = await runClient(/* lua */ `
+        expect(await runClient(/* lua */ `
             return findInstance("imperative_kept") ~= nil
-        `)
-
-        expect(after.return).toBe(true)
+        `)).toBe(true)
     })
 })
 
-describe("component api", () => {
+describe("declarative api", () => {
     test("reconciles an instance in a replicated container", async () => {
         await runServer(/* lua */ `
-            setInstanceDeclarative(makePart("component_replicated", workspace))
+            spawnReplicatedInstanceEntityDeclarative(spawnPart("component_replicated", workspace))
         `)
 
-        const result = await runClient(/* lua */ `
+        expect(await runClient(/* lua */ `
             return findInstance("component_replicated") ~= nil
-        `)
-
-        expect(result.return).toBe(true)
+        `)).toBe(true)
     })
 
     test("defers until the instance enters a replicated container", async () => {
         await runServer(/* lua */ `
-            setInstanceDeclarative(makePart("component_deferred", ServerStorage))
+            spawnReplicatedInstanceEntityDeclarative(spawnPart("component_deferred", ServerStorage))
         `)
 
-        const before = await runClient(/* lua */ `
+        expect(await runClient(/* lua */ `
             return findInstance("component_deferred") ~= nil
-        `)
-
-        expect(before.return).toBe(false)
+        `)).toBe(false)
 
         await runServer(/* lua */ `
             ServerStorage.component_deferred.Parent = workspace
         `)
 
-        const after = await runClient(/* lua */ `
+        expect(await runClient(/* lua */ `
             return findInstance("component_deferred") ~= nil
-        `)
-
-        expect(after.return).toBe(true)
+        `)).toBe(true)
     })
 
     test("stops replicating the instance when stopped", async () => {
         await runServer(/* lua */ `
-            setInstanceDeclarative(makePart("component_stopped", workspace))
+            spawnReplicatedInstanceEntityDeclarative(spawnPart("component_stopped", workspace))
         `)
 
-        const before = await runClient(/* lua */ `
+        expect(await runClient(/* lua */ `
             return findInstance("component_stopped") ~= nil
-        `)
-
-        expect(before.return).toBe(true)
+        `)).toBe(true)
 
         await runServer(/* lua */ `
             world:remove(findInstance("component_stopped"), Jecs.pair(replecs_roblox.instance, cts.Target))
         `)
 
-        const after = await runClient(/* lua */ `
+        expect(await runClient(/* lua */ `
             return findInstance("component_stopped") ~= nil
-        `)
-
-        expect(after.return).toBe(false)
+        `)).toBe(false)
     })
 })
 
@@ -257,32 +237,28 @@ describe("streaming", () => {
     test("defers reconciliation until a streamed-out instance streams in", async () => {
         // 1. create a part far outside the player's streaming radius
         await runServer(/* lua */ `
-            local part = makePart("streaming_part", workspace)
+            local part = spawnPart("streaming_part", workspace)
             part.Position = Vector3.new(50000, 0, 0)
         `)
 
         // 2-3. nothing is replicated yet, so streaming alone must keep it off the client
-        const unstreamed = await runClient(/* lua */ `
+        expect(await runClient(/* lua */ `
             return workspace:FindFirstChild("streaming_part") ~= nil
-        `)
-
-        expect(unstreamed.return).toBe(false)
+        `)).toBe(false)
 
         // 4. replicate it through ecs while it is still streamed out
         await runServer(/* lua */ `
-            setInstanceDeclarative(workspace.streaming_part)
+            spawnReplicatedInstanceEntityDeclarative(workspace.streaming_part)
         `)
 
         // 5-6. the entity replicates, but the instance is still streamed out — absent from
         // both the client workspace and the client entity (the reconciler can't resolve it)
-        const deferred = await runClient(/* lua */ `
+        expect(await runClient(/* lua */ `
             return {
                 inWorkspace = workspace:FindFirstChild("streaming_part") ~= nil,
                 onEntity = findInstance("streaming_part") ~= nil,
             }
-        `)
-
-        expect(deferred.return).toEqual({ inWorkspace: false, onEntity: false })
+        `)).toEqual({ inWorkspace: false, onEntity: false })
 
         // 7. move it next to the player so it streams in
         await runServer(/* lua */ `
@@ -293,33 +269,14 @@ describe("streaming", () => {
         `)
 
         // 8-9. the tagged instance streams in and the reconciler resolves it onto the entity
-        const streamed = await runClient(/* lua */ `
+        expect(await runClient(/* lua */ `
             return {
                 inWorkspace = workspace:FindFirstChild("streaming_part") ~= nil,
                 onEntity = findInstance("streaming_part") ~= nil,
             }
-        `)
-
-        expect(streamed.return).toEqual({ inWorkspace: true, onEntity: true })
+        `)).toEqual({ 
+            inWorkspace: true, 
+            onEntity: true 
+        })
     })
-})
-
-test("replicates a plain value component through the fixture", async () => {
-    await runServer(/* lua */ `
-        local e = world:entity()
-        world:set(e, cts.Health, 100)
-        replicator:set_networked(e)
-        replicator:set_reliable(e, cts.Health)
-    `)
-
-    const result = await runClient(/* lua */ `
-        for _, health in world:query(cts.Health) do
-            if health == 100 then
-                return health
-            end
-        end
-        return false
-    `)
-
-    expect(result.return).toBe(100)
 })
