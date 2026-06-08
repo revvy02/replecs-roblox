@@ -89,7 +89,7 @@ local function setupNetworkedInstanceReconciler(world: Jecs.World)
 		end
 	end)
 
-	world:removed(InstanceId, function(e, p)
+	world:removed(InstanceId, function(e, p, deleting)
 		local ct = pair_second(world, p)
 		local id = world:get(e, p)
 		local map = idToEntityComponents[id]
@@ -99,6 +99,9 @@ local function setupNetworkedInstanceReconciler(world: Jecs.World)
 			map[e] = nil
 		end
 
+		if deleting then
+			return
+		end
 		-- The id pair is the signal that this entity references an instance.
 		-- When it stops replicating, drop the resolved component. (Client-only:
 		-- the server never runs this reconciler, so the caller's authoritative
