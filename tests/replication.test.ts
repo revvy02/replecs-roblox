@@ -1,12 +1,13 @@
 import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import { resolve } from "node:path";
-import { RodeoClient, type MultiplayerTestServer, type MultiplayerTestClient } from "@rodeo/client";
+import { RodeoClient, type Studio, type MultiplayerTestServer, type MultiplayerTestClient } from "@rodeo/client";
 
 const PORT = 45872;
 const PLACE = "place.rbxl";
 
 let serve: ReturnType<typeof Bun.spawn> | undefined;
 let session: RodeoClient;
+let studio: Studio;
 let server: MultiplayerTestServer;
 let client: MultiplayerTestClient;
 
@@ -22,19 +23,40 @@ beforeAll(async () => {
     });
 
     session = await RodeoClient.connect(`localhost:${PORT}`);
-    server = await (await session.getLocalStudio()).startMultiplayerTest({ placeFile: resolve(PLACE) });
-    client = await server.connectClient();
-}, 30_000)
+    // 1.0.0: startMultiplayerTest lives on Studio — the MP server DataModel
+    // spawns off an open edit Studio, so open the place first.
+    //
+    // Start the session with the client UP FRONT (startMultiplayerTest(1)) and
+    // use server.getPlayers()[0] rather than growing it with server.connectClient().
+    // connectClient calls StudioTestService:AddPlayers on the running server,
+    // which crashes the Studio server process (SIGSEGV) on Studio 0.726 — the
+    // server VM's plugin socket drops ("Connection reset") and every later step
+    // times out. Spawning the client up front (ExecuteMultiplayerTestAsync(1))
+    // avoids AddPlayers entirely. It also means teardown never has to disconnect
+    // a client (mp.close ends the whole session), so close ordering can't hang.
+    const backend = await session.getLocalStudio();
+    studio = await backend.openFile(resolve(PLACE), { background: true });
+    server = await studio.startMultiplayerTest(1);
+    client = server.getPlayers()[0];
+}, 60_000)
 
 afterAll(async () => {
-    await client.disconnect();
+    // server.close() (mp.close -> StudioTestService:EndTest) tears down the MP
+    // server *and* the client in one shot, so there's no per-client disconnect.
+    // (Earlier this hung when client.disconnect() preceded server.close(), but
+    // that was downstream of the AddPlayers crash leaving a broken session;
+    // with the client spawned up front the session stays healthy and ordering
+    // no longer matters — verified. Keeping the single-shot teardown regardless.)
     await server.close();
+    await studio.close();
     await session.close();
     serve?.kill();
 }, 30_000)
 
 async function runServer(body: string) {
     const result = await server.runCode({
+        // play:server identity so cacheRequires shares the bootstrap's module
+        // state (same world/replicator singletons) — see runClient.
         target: "play:server",
         cacheRequires: true,
         source: /* lua */ `
@@ -92,6 +114,9 @@ async function runServer(body: string) {
 
 async function runClient(body: string) {
     const result = await client.runCode({
+        // play:client identity so cacheRequires shares the client bootstrap's
+        // module state (the world it applies the replicated snapshot into).
+        // Targeting the existing client VM does not add another player.
         target: "play:client",
         cacheRequires: true,
         source: /* lua */ `
