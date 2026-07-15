@@ -34,10 +34,40 @@ Jecs.meta(InstanceId, Replecs.serdes, {
 local InstanceProtocol = Jecs.component()
 Jecs.meta(InstanceProtocol, Jecs.Name, "replecs-roblox.InstanceProtocol")
 
+-- Relation: pair(InstanceCustom, component) marks an entity to reconcile its
+-- client entity by the component's replicated instance (the parallel of
+-- replecs.custom, but instance-valued). The component's InstanceCustomHandler
+-- meta resolves the instance to a client entity.
+local InstanceCustom = Jecs.component()
+Jecs.meta(InstanceCustom, Jecs.Name, "replecs-roblox.InstanceCustom")
+
+-- Component meta: InstanceCustomHandler holds `fn(instance) -> Entity`, the
+-- instance-valued parallel of replecs.custom_handler. Set it on the instance
+-- component (e.g. cts.Player) that uses instance-custom reconciliation.
+local InstanceCustomHandler = Jecs.component()
+Jecs.meta(InstanceCustomHandler, Jecs.Name, "replecs-roblox.InstanceCustomHandler")
+
+-- Set by extend_client to the client-side reconciliation routine; nil on the
+-- server (where the custom-id handler is never invoked). One client world per
+-- process, matching the singleton InstanceId/InstanceProtocol pattern.
+local clientResolve: ((ctx: any) -> any)? = nil
+
+-- Registered on both sides so the handshake agrees by identifier; only the
+-- client ever runs the handler.
+local instanceCustomId = Replecs.create_custom_id("replecs-roblox.instance_custom", function(ctx)
+	if clientResolve then
+		return clientResolve(ctx)
+	end
+	return nil
+end)
+
 local function setupNetworkedInstanceReconciler(world: Jecs.World)
 	local idToEntityComponents = {}
 	local idToInstance = {}
 	local instanceToEntityComponents = {}
+	-- Stable client entity per instance id for instance-custom entities whose
+	-- instance hasn't streamed in yet (so replicated data isn't dropped).
+	local idToCustomEntity = {}
 
 	local function ensureMap(id)
 		local map = idToEntityComponents[id]
@@ -72,6 +102,25 @@ local function setupNetworkedInstanceReconciler(world: Jecs.World)
 		end
 
 		instanceToEntityComponents[instance] = nil
+	end
+
+	-- Resolve id -> instance. Falls back to a synchronous tag search so a present
+	-- instance reconciles even if the InstanceAdded signal hasn't fired for it
+	-- yet (the player race). Returns nil only when the instance isn't present
+	-- (streamed out / not arrived).
+	local function resolveInstance(id: number): Instance?
+		local instance = idToInstance[id]
+		if instance then
+			return instance
+		end
+		for _, inst in CollectionService:GetTagged(TAG) do
+			if inst:GetAttribute(ATTR) == id then
+				idToInstance[id] = inst
+				instanceToEntityComponents[inst] = ensureMap(id)
+				return inst
+			end
+		end
+		return nil
 	end
 
 	world:added(InstanceId, function(e, p, id)
@@ -109,6 +158,35 @@ local function setupNetworkedInstanceReconciler(world: Jecs.World)
 		world:remove(e, ct)
 	end)
 
+	-- Instance-custom reconciliation (client): decide which client entity a
+	-- replicated instance-custom entity maps to, keyed off pair(InstanceId, ct).
+	clientResolve = function(ctx): Jecs.Entity?
+		local component = ctx.target(InstanceId)
+		if not component then
+			return nil
+		end
+		local id = ctx.pair_value(InstanceId, component)
+		local instance = resolveInstance(id)
+		if instance then
+			-- instance present: the component's handler decides the entity
+			-- (e.g. ref(instance)), unifying with local instance->entity users.
+			local handler = world:get(component, InstanceCustomHandler)
+			if handler then
+				return handler(instance)
+			end
+		end
+		-- streamed instance not present yet: reconcile to a stable id-keyed
+		-- entity so replicated data lands; its value resolves when the instance
+		-- streams in. (Handler-based unification for not-yet-present instances is
+		-- a follow-up — see docs/instance-custom-handler.md.)
+		local e = idToCustomEntity[id]
+		if not e then
+			e = world:entity()
+			idToCustomEntity[id] = e
+		end
+		return e
+	end
+
 	for _, instance in CollectionService:GetTagged(TAG) do
 		instanceAdded(instance)
 	end
@@ -119,12 +197,16 @@ end
 export type RbxComponents = {
 	instance_id: Jecs.Id<number>,
 	instance: Jecs.Entity,
+	instance_custom: Jecs.Entity,
+	instance_custom_handler: Jecs.Entity,
 }
 
 export type ServerExtension = {
 	components: RbxComponents,
 	set_instance: (self: ServerExtension, entity: Jecs.Entity, component: Jecs.Entity) -> (),
 	stop_instance: (self: ServerExtension, entity: Jecs.Entity, component: Jecs.Entity, keep: boolean?) -> (),
+	set_instance_custom: (self: ServerExtension, entity: Jecs.Entity, component: Jecs.Entity) -> (),
+	stop_instance_custom: (self: ServerExtension, entity: Jecs.Entity, component: Jecs.Entity) -> (),
 }
 
 export type ClientExtension = {
@@ -137,6 +219,8 @@ export type ExtendedClient = Replecs.Client & ClientExtension
 local function extend_server(replicator: Replecs.Server): ExtendedServer
 	local world = replicator.world
 	local nextId = 0
+
+	replicator:register_custom_id(instanceCustomId)
 
 	local function replicateInstance(entity, component, instance: Instance)
 		local id = instance:GetAttribute(ATTR)
@@ -202,10 +286,24 @@ local function extend_server(replicator: Replecs.Server): ExtendedServer
 		stopReplicateInstance(entity, pair_second(world, p), deleting)
 	end)
 
+	-- Instance-custom marking: pair(InstanceCustom, component) -> reconcile this
+	-- entity via the registered instance custom-id.
+	world:added(InstanceCustom, function(entity)
+		replicator:set_custom(entity, instanceCustomId)
+	end)
+	world:removed(InstanceCustom, function(entity, _p, deleting)
+		if deleting then
+			return
+		end
+		replicator:remove_custom(entity)
+	end)
+
 	local extended = replicator :: ExtendedServer
 
 	extended.components.instance_id = InstanceId
 	extended.components.instance = InstanceProtocol
+	extended.components.instance_custom = InstanceCustom
+	extended.components.instance_custom_handler = InstanceCustomHandler
 	extended.set_instance = function(_, entity, component)
 		world:add(entity, pair(InstanceProtocol, component))
 	end
@@ -213,16 +311,25 @@ local function extend_server(replicator: Replecs.Server): ExtendedServer
 		stopReplicateInstance(entity, component, false, keep)
 		world:remove(entity, pair(InstanceProtocol, component))
 	end
+	extended.set_instance_custom = function(_, entity, component)
+		world:add(entity, pair(InstanceCustom, component))
+	end
+	extended.stop_instance_custom = function(_, entity, component)
+		world:remove(entity, pair(InstanceCustom, component))
+	end
 
 	return extended
 end
 
 local function extend_client(replicator: Replecs.Client): ExtendedClient
 	setupNetworkedInstanceReconciler(replicator.world)
+	replicator:register_custom_id(instanceCustomId)
 
 	local extended = replicator :: ExtendedClient
 	extended.components.instance_id = InstanceId
 	extended.components.instance = InstanceProtocol
+	extended.components.instance_custom = InstanceCustom
+	extended.components.instance_custom_handler = InstanceCustomHandler
 
 	return extended
 end
@@ -233,4 +340,6 @@ return {
 
 	instance_id = InstanceId,
 	instance = InstanceProtocol,
+	instance_custom = InstanceCustom,
+	instance_custom_handler = InstanceCustomHandler,
 }
