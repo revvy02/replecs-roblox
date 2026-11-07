@@ -2,7 +2,7 @@
 # It is not intended for manual editing.
 format = 2
 name = "rvy/replecs_roblox"
-version = "0.1.0"
+version = "0.0.4"
 target = "roblox"
 
 [graph."wally#pepeeltoro41/jecs-utils@1.4.3 roblox"]
