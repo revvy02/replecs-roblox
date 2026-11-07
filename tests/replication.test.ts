@@ -55,10 +55,10 @@ afterAll(async () => {
 
 async function runServer(body: string) {
     const result = await server.runCode({
-        // play:server identity so cacheRequires shares the bootstrap's module
-        // state (same world/replicator singletons) — see runClient.
-        target: "play:server",
-        cacheRequires: true,
+        // server identity so requires resolve to the bootstrap's live modules
+        // (same world/replicator singletons) — see runClient. Reusing the live
+        // require cache is the default since rodeo 1.5 (no cacheRequires).
+        context: "server",
         source: /* lua */ `
             local ReplicatedStorage = game:GetService("ReplicatedStorage")
             local ServerScriptService = game:GetService("ServerScriptService")
@@ -114,11 +114,10 @@ async function runServer(body: string) {
 
 async function runClient(body: string) {
     const result = await client.runCode({
-        // play:client identity so cacheRequires shares the client bootstrap's
-        // module state (the world it applies the replicated snapshot into).
-        // Targeting the existing client VM does not add another player.
-        target: "play:client",
-        cacheRequires: true,
+        // client identity so requires resolve to the client bootstrap's live
+        // modules (the world it applies the replicated snapshot into).
+        // Running on the existing client DOM does not add another player.
+        context: "client",
         source: /* lua */ `
             local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
